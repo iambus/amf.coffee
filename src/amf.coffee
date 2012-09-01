@@ -92,16 +92,59 @@ class RemotingMessage
 		for k, v of properties
 			@[k] = v
 
-class_creator = (classname, properties) ->
-	if not classname and not properties
-		Object
-	else
-		class Object
-			@classname = classname
-			@fields = properties
-		Object
+class ArrayCollection
+	@classname: 'flex.messaging.io.ArrayCollection'
+	@externalizable: true
+	constructor: (@source=[])->
+	read_external: (input) ->
+		@source = input.read_value()
+	write_external: ->
+		throw "Not Implemented"
 
-ASObject = class_creator('', [])
+
+class ObjectFactory
+	constructor: ->
+		@externalizable = {}
+		@classes = {}
+
+	class_creator: (classname, properties) ->
+		if not classname and not properties
+			Object
+		else
+			class Object
+				@classname = classname
+				@fields = properties
+			Object
+
+	define: (classname, dynamic, externalizable, properties) ->
+		if externalizable
+			throw "Can't define unkown externalizable: " + classname
+		if dynamic
+			throw "Not Implemented"
+		return @class_creator classname, properties
+
+	lookup: (classname) ->
+		@classes[classname]
+
+	lookup_or_define: (classname, dynamic, externalizable, properties) ->
+		@lookup(classname) or @define(classname, dynamic, externalizable, properties)
+
+	create_external: (classname) ->
+		@externalizable[classname]
+
+	register: (t) ->
+		classname = t.classname
+		if not classname
+			throw "classname not defined: " + t
+		@classes[classname] = t
+		if t.externalizable
+			@externalizable[classname] = t
+
+object_factory = new ObjectFactory
+
+register_class = (t) -> object_factory.register t
+
+register_class ArrayCollection
 
 type = do ->
 	classToType = {}
@@ -139,14 +182,9 @@ trait_of = (v) ->
 class TraitInfo
 	constructor: (@classname, @dynamic, @externalizable, @properties=[]) ->
 
-	create_factory: ->
-		if @externalizable
-			throw "Not Implemented: TraitInfo externalizable"
-		class_creator(@classname, @properties)
-
 	create: ->
 		if not @factory
-			@factory = @create_factory()
+			@factory = object_factory.lookup_or_define(@classname, @dynamic, @externalizable, @properties)
 		new @factory
 
 ##################################################
@@ -360,7 +398,7 @@ class AMFInput extends ByteArrayInputStream
 		@object_table.push(object)
 
 		if ti.externalizable
-			throw "Not Implemented: read_object externalizable"
+			object.read_external(this)
 		else
 			for property in ti.properties
 				object[property] = @read_value()
@@ -574,7 +612,7 @@ class AMFOutput extends ByteArrayOutputStream
 		# TODO: write reference
 
 		if ti.externalizable
-			throw "Not Implemented: write externalizable"
+			v.write_external this
 		else
 			for property in ti.properties
 				@write_value v[property]
@@ -662,7 +700,10 @@ class AMFConnection extends HTTPConnection
 	unpack_message: (message) ->
 		message = @unpack_messages message
 		# TODO: check ErrorMessage
-		message[0].body
+		classname = classname_of message
+		switch classname
+			when 'flex.messaging.messages.AcknowledgeMessage' then message.body
+			else message[0].body
 
 	on_message: (message, callback) ->
 		bytes = encode_amf message
