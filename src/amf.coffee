@@ -10,10 +10,20 @@ class ByteArrayOutputStream
 		@array = new Uint8Array(@size)
 		@offset = 0
 
-	append: (b) ->
+	write_byte: (b) ->
 		if @offset >= @size
 			@double()
 		@array[@offset++] = b
+
+	write_u16: (n) ->
+		@write_byte (n >> 8) & 0xff
+		@write_byte n & 0xff
+
+	write_u32: (n) ->
+		@write_byte (n >> 24) & 0xff
+		@write_byte (n >> 16) & 0xff
+		@write_byte (n >> 8) & 0xff
+		@write_byte n & 0xff
 
 	double: ->
 		size = @size * 2
@@ -66,25 +76,121 @@ class ByteArrayInputStream
 			throw 'eof'
 
 ##################################################
-# decode
+# amf
 ##################################################
 
-class Message
+class ActionMessage
 	constructor: (@version, @headers=[], @bodies=[]) ->
 
 class MessageBody
 	constructor: (@target_uri, @response_uri, @data) ->
 
+class RemotingMessage
+	@classname: 'flex.messaging.messages.RemotingMessage'
+	@fields: ['source', 'operation', 'destination', 'body', 'clientId', 'messageId', 'timeToLive', 'timestamp', 'headers']
+	constructor: (properties) ->
+		for k, v of properties
+			this.k = v
+
+class_creator = (classname, properties) ->
+	if not classname and not properties
+		Object
+	else
+		class Object
+			@classname = classname
+			@fields = properties
+		Object
+
+ASObject = class_creator('', [])
+
+type = do ->
+	classToType = {}
+	types = [
+		"Boolean"
+		"Number"
+		"String"
+		"Function"
+		"Array"
+		"Date"
+		"RegExp"
+		"Undefined"
+		"Null"
+	]
+	for name in types
+		classToType["[object #{name}]"] = name.toLowerCase()
+	(obj) ->
+		strType = Object::toString.call(obj)
+		classToType[strType] or "object"
+
+amf_typeof = (v) ->
+	v.constructor
+
+classname_of = (v) ->
+	v.constructor.classname or ''
+
+trait_of = (v) ->
+	t = amf_typeof v
+	classname = t.classname
+	fields = t.fields
+	dynamic = if fields then false else true
+	externalizable = false
+	new TraitInfo(classname, dynamic, externalizable, fields)
+
 class TraitInfo
-	constructor: (@classname, @dynamic, @externalizable, @count) ->
-		@properties = []
+	constructor: (@classname, @dynamic, @externalizable, @properties=[]) ->
+
+	create_factory: ->
+		if @externalizable
+			throw "Not Implemented: TraitInfo externalizable"
+		class_creator(@classname, @properties)
+
+	create: ->
+		if not @factory
+			@factory = @create_factory()
+		new @factory
+
+##################################################
+# decode
+##################################################
+amf_types =
+	amf0:
+		kNumberType        : 0
+		kBooleanType       : 1
+		kStringType        : 2
+		kObjectType        : 3
+		kMovieClipType     : 4
+		kNullType          : 5
+		kUndefinedType     : 6
+		kReferenceType     : 7
+		kECMAArrayType     : 8
+		kObjectEndType     : 9
+		kStrictArrayType   : 10
+		kDateType          : 11
+		kLongStringType    : 12
+		kUnsupportedType   : 13
+		kRecordsetType     : 14
+		kXMLObjectType     : 15
+		kTypedObjectType   : 16
+		kAvmPlusObjectType : 17
+	amf3:
+		kUndefinedType  : 0
+		kNullType       : 1
+		kFalseType      : 2
+		kTrueType       : 3
+		kIntegerType    : 4
+		kDoubleType     : 5
+		kStringType     : 6
+		kXMLType        : 7
+		kDateType       : 8
+		kArrayType      : 9
+		kObjectType     : 10
+		kAvmPlusXmlType : 11
+		kByteArrayType  : 12
 
 class AMFInput extends ByteArrayInputStream
 	constructor: (array) ->
 		super array
-		@string_table = []
-		@object_table = []
-		@traits_table = []
+		@reset()
 
 	reset: ->
 		@string_table = []
@@ -126,56 +232,27 @@ class AMFInput extends ByteArrayInputStream
 		@read_value0()
 
 	read_value0: ->
-		kNumberType        = 0
-		kBooleanType       = 1
-		kStringType        = 2
-		kObjectType        = 3
-		kMovieClipType     = 4
-		kNullType          = 5
-		kUndefinedType     = 6
-		kReferenceType     = 7
-		kECMAArrayType     = 8
-		kObjectEndType     = 9
-		kStrictArrayType   = 10
-		kDateType          = 11
-		kLongStringType    = 12
-		kUnsupportedType   = 13
-		kRecordsetType     = 14
-		kXMLObjectType     = 15
-		kTypedObjectType   = 16
-		kAvmPlusObjectType = 17
-		type = @read_byte()
-		switch type
-			when kAvmPlusObjectType then @read_value0 = @read_value3; @read_value()
-			else throw 'not implemented amf0 type: ' + type
+		t = @read_byte()
+		switch t
+			when amf_types.amf0.kAvmPlusObjectType then @read_value = @read_value3; @read_value()
+			else throw 'not implemented amf0 type: ' + t
 
 	read_utf8: ->
 		n = @read_u16()
 		@read_utf8_n(n)
 
 	read_value3: ->
-		kUndefinedType  = 0
-		kNullType       = 1
-		kFalseType      = 2
-		kTrueType       = 3
-		kIntegerType    = 4
-		kDoubleType     = 5
-		kStringType     = 6
-		kXMLType        = 7
-		kDateType       = 8
-		kArrayType      = 9
-		kObjectType     = 10
-		kAvmPlusXmlType = 11
-		kByteArrayType  = 12
-
-		type = @read_byte()
-		switch type
-			when kNullType then null
-			when kIntegerType then @read_integer()
-			when kStringType then @read_utf8_vr()
-			when kArrayType then @read_array()
-			when kObjectType then @read_object()
-			else throw 'not implemented amf3 type: ' + type
+		t = @read_byte()
+		switch t
+			when amf_types.amf3.kUndefinedType then undefined
+			when amf_types.amf3.kNullType then null
+			when amf_types.amf3.kFalseType then false
+			when amf_types.amf3.kTrueType then true
+			when amf_types.amf3.kIntegerType then @read_integer()
+			when amf_types.amf3.kStringType then @read_utf8_vr()
+			when amf_types.amf3.kArrayType then @read_array()
+			when amf_types.amf3.kObjectType then @read_object()
+			else throw 'not implemented amf3 type: ' + t
 
 	read_u29: ->
 		b = @read_byte() & 0xff
@@ -248,8 +325,7 @@ class AMFInput extends ByteArrayInputStream
 			return @read_object_ref ref >> 1
 		ti = @read_traits(ref)
 
-		# TODO: instantiate typed object
-		object = {}
+		object = ti.create()
 		@object_table.push(object)
 
 		if ti.externalizable
@@ -273,7 +349,7 @@ class AMFInput extends ByteArrayInputStream
 		dynamic = (ref & 8) == 8
 		count = ref >> 4
 		classname = @read_utf8_vr()
-		ti = new TraitInfo(classname, dynamic, externalizable, count)
+		ti = new TraitInfo(classname, dynamic, externalizable)
 		@traits_table.push(ti)
 		ti.properties.push(@read_utf8_vr()) for [0...count]
 		ti
@@ -295,7 +371,9 @@ class Decoder
 		headers = @read_header() for [0...header_count]
 		body_count = @input.read_u16()
 		body = (@read_body() for [0...body_count])
-		new Message(version, headers, body)
+#		if @input.offset != @input.size
+#			throw "offset: #{@input.offset}, size: #{@input.size}"
+		new ActionMessage(version, headers, body)
 
 	read_header: ->
 		name = @input.read_utf8()
@@ -321,16 +399,29 @@ decode_amf = (array) ->
 class AMFOutput extends ByteArrayOutputStream
 	constructor: (size) ->
 		super size
+		@reset()
 
-	write_utf8: (s) ->
+	reset: ->
+		@object_table = []
+		@string_table = []
+		@traits_table = []
+		@traits = {}
+		@strings = {}
+
+	create_trait: (v) ->
+		ti = trait_of v
+		@traits[ti.classname] = @traits_table.length
+		@traits_table.push ti
+		ti
+
+	to_utf8: (s) ->
 		# http://user1.matsumoto.ne.jp/~goma/js/utf.js
-		a = @array
 		utf8 = []
 		i = 0
 		idx = 0
-		while i++ < s.length
-			c = s.charCodeAt(i)
-			if (c <= 0x7f)
+		while i < s.length
+			c = s.charCodeAt(i++)
+			if c <= 0x7f
 				utf8[idx++] = c
 			else if c <= 0x7ff
 				utf8[idx++] = 0xc0 | (c >>> 6 )
@@ -346,6 +437,197 @@ class AMFOutput extends ByteArrayOutputStream
 				utf8[idx++] = ((0xff00 >>> j) & 0xff) | (c >>> (6*--j) )
 				while (j--) 
 					utf8[idx++] = 0x80 | ((c >>> (6*j)) & 0x3f)
+		utf8
+
+	write_value: (v) ->
+		@write_value0 v
+
+	write_value0: (v) ->
+		switch type v
+			when 'array' then @write_byte(amf_types.amf0.kAvmPlusObjectType); @write_value = @write_value3; @write_value(v)
+			when 'object' then @write_byte(amf_types.amf0.kmAvmPlusObjectType); @write_value = @write_value3; @write_value(v)
+			else throw "Not Implemented: write_value0 " + type v
+
+	write_utf8: (s) ->
+		utf8 = @to_utf8 s
+		@write_u16 utf8.length
+		for b in utf8
+			@write_byte b
+
+	write_value3: (v) ->
+		switch type v
+			when 'null' then @write_byte amf_types.amf3.kNullType
+			when 'number' then @write_number v
+			when 'string' then @write_string v
+			when 'object' then @write_object v
+			when 'array' then @write_array v
+			else throw "Not Implemented: write_value3 " + type v
+
+	write_u29: (n) ->
+		if n < 0x80
+			@write_byte n
+		else if n < 0x4000
+			@write_byte ((n >> 7) & 0x7f) | 0x80
+			@write_byte n & 0x7f
+		else if n < 0x200000
+			@write_byte (n >> 14) * 0x7f | 0x80
+			@write_byte (n >> 7) * 0x7f | 0x80
+			@write_byte n & 0x7f
+		else if n < 0x40000000
+			@write_byte (n >> 22) * 0x7f | 0x80
+			@write_byte (n >> 15) * 0x7f | 0x80
+			@write_byte (n >> 8) * 0x7f | 0x80
+			@write_byte n & 0xff
+		else
+			throw "Integer out of range: " + n
+
+	write_number: (n) ->
+		if n % 1 == 0
+			@write_integer n
+		else
+			@write_float n
+
+	write_integer: (n) ->
+		@write_byte amf_types.amf3.kIntegerType
+		@write_u29 n
+
+	write_utf8_vr: (s) ->
+		i = @strings[s]
+		if i?
+			@write_u29 i << 1
+		else
+			if s
+				utf8 = @to_utf8 s
+				@write_u29 (utf8.length << 1) | 1
+				for b in utf8
+					@write_byte b
+				@strings[s] = @string_table.length
+				@string_table.push s
+			else
+				@write_u29 1
+
+	write_string: (s) ->
+		@write_byte amf_types.amf3.kStringType
+		@write_utf8_vr s
+
+	write_array: (v) ->
+		@write_byte amf_types.amf3.kArrayType
+
+		# TODO: write array by reference
+		@write_u29 (v.length << 1) | 1
+
+		@object_table.push(v)
+		# TODO: write reference
+
+		@write_utf8_vr ''
+		for x in v
+			@write_value x
+
+	write_object: (v) ->
+		@write_byte amf_types.amf3.kObjectType
+
+		# TODO: write object by reference
+		classname = classname_of v
+		i = @traits[classname]
+		if i?
+			ti = @traits_table[i]
+			@write_u29 (i << 2) | 0b01
+		else
+			ti = @create_trait v
+			@write_u29 (ti.properties.length << 4) | (if ti.dynamic then 0b1000 else 0) | (if ti.externalizable then 0b100 else 0) | 0b11
+			@write_utf8_vr ti.classname
+			@write_utf8_vr p for p in ti.properties
+
+		@object_table.push(v)
+		# TODO: write reference
+
+		if ti.externalizable
+			throw "Not Implemented: write externalizable"
+		else
+			for property in ti.properties
+				@write_value v[property]
+			if ti.dynamic
+				for k, x of v
+					if k not in ti.properties
+						@write_utf8_vr k
+						@write_value x
+				@write_utf8_vr ''
+
+class Encoder
+	constructor: (@message) ->
+		@output = new AMFOutput()
+
+	write_header: (header) ->
+		throw "Not Implemented: write_header"
+
+	write_body: (body) ->
+		@output.write_utf8 body.target_uri
+		@output.write_utf8 body.response_uri
+		#@output.write_u32 0
+		@output.write_u32 0xffffffff
+		@output.reset()
+		@output.write_value(body.data)
+
+	encode: ->
+		@output.write_u16(3)
+		headers = @message.headers
+		@output.write_u16(headers.length)
+		@write_header header for header in headers
+		bodies = @message.bodies
+		@output.write_u16(bodies.length)
+		@write_body body for body in bodies
+		@output.to_array()
+
+encode_amf = (message) ->
+	encoder = new Encoder(message)
+	encoder.encode()
+
+##################################################
+# connection
+##################################################
+
+class HTTPConnection
+	constructor: (@url) ->
+
+	on_post: (body, callback) ->
+		xhr = new XMLHttpRequest
+		xhr.open 'POST', @url, true
+		xhr.responseType = 'arraybuffer'
+		xhr.onload = callback
+		xhr.send(body)
+
+class AMFConnection extends HTTPConnection
+	constructor: (url) ->
+		super url
+		@response_counter = 0
+
+	get_response_uri: ->
+		'/' + (@response_uri++)
+
+	pack_messages: (command, args...) ->
+		request_message = new ActionMessage(3)
+		target_uri = command
+		resposne_uri = @get_response_uri()
+		amf_message = new MessageBody(target_uri, response_uri, args)
+		request_message.bodies.push amf_message
+		request_message
+
+	pack_message: (destination, operation, args...) ->
+		@pack_messages null, new RemotingMessage
+			destination: destination
+			operation: operation
+			body: args
+
+	on_message: (message, callback) ->
+		bytes = encode_amf message
+		@on_post message,
+			(array) ->
+				callback decode_amf array
+
+	on: (destination, operation, args, callback) ->
+		@on_message @pack_message(destination, operation, args...),
+			(message) ->
+				callback @unpack_message message
 
 ##################################################
 # exports
@@ -355,6 +637,7 @@ exports =
 	ByteArrayOutputStream: ByteArrayOutputStream
 	ByteArrayInputStream: ByteArrayInputStream
 	decode_amf: decode_amf
+	encode_amf: encode_amf
 
 if typeof module isnt 'undefined' and module.exports
 	module.exports = exports
