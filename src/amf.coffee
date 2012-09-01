@@ -90,7 +90,7 @@ class RemotingMessage
 	@fields: ['source', 'operation', 'destination', 'body', 'clientId', 'messageId', 'timeToLive', 'timestamp', 'headers']
 	constructor: (properties) ->
 		for k, v of properties
-			this.k = v
+			@[k] = v
 
 class_creator = (classname, properties) ->
 	if not classname and not properties
@@ -456,6 +456,7 @@ class AMFOutput extends ByteArrayOutputStream
 
 	write_value3: (v) ->
 		switch type v
+			when 'undefined' then @write_byte amf_types.amf3.kUndefinedType
 			when 'null' then @write_byte amf_types.amf3.kNullType
 			when 'number' then @write_number v
 			when 'string' then @write_string v
@@ -593,7 +594,7 @@ class HTTPConnection
 		xhr = new XMLHttpRequest
 		xhr.open 'POST', @url, true
 		xhr.responseType = 'arraybuffer'
-		xhr.onload = callback
+		xhr.onload = -> callback new Uint8Array xhr.response
 		xhr.send(body)
 
 class AMFConnection extends HTTPConnection
@@ -602,21 +603,27 @@ class AMFConnection extends HTTPConnection
 		@response_counter = 0
 
 	get_response_uri: ->
-		'/' + (@response_uri++)
+		'/' + (@response_counter++)
 
 	pack_messages: (command, args...) ->
 		request_message = new ActionMessage(3)
 		target_uri = command
-		resposne_uri = @get_response_uri()
+		response_uri = @get_response_uri()
 		amf_message = new MessageBody(target_uri, response_uri, args)
 		request_message.bodies.push amf_message
 		request_message
 
 	pack_message: (destination, operation, args...) ->
-		@pack_messages null, new RemotingMessage
+		@pack_messages '', new RemotingMessage
 			destination: destination
 			operation: operation
 			body: args
+
+	unpack_messages: (message) ->
+		message.bodies[0].data
+
+	unpack_message: (message) ->
+		(@unpack_messages message)[0].body
 
 	on_message: (message, callback) ->
 		bytes = encode_amf message
@@ -626,7 +633,7 @@ class AMFConnection extends HTTPConnection
 
 	on: (destination, operation, args, callback) ->
 		@on_message @pack_message(destination, operation, args...),
-			(message) ->
+			(message) =>
 				callback @unpack_message message
 
 ##################################################
@@ -638,6 +645,7 @@ exports =
 	ByteArrayInputStream: ByteArrayInputStream
 	decode_amf: decode_amf
 	encode_amf: encode_amf
+	AMFConnection: AMFConnection
 
 if typeof module isnt 'undefined' and module.exports
 	module.exports = exports
