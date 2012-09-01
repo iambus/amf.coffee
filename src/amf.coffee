@@ -187,6 +187,8 @@ amf_types =
 		kAvmPlusXmlType : 11
 		kByteArrayType  : 12
 
+TWOeN52 = Math.pow(2, -52)
+
 class AMFInput extends ByteArrayInputStream
 	constructor: (array) ->
 		super array
@@ -249,6 +251,7 @@ class AMFInput extends ByteArrayInputStream
 			when amf_types.amf3.kFalseType then false
 			when amf_types.amf3.kTrueType then true
 			when amf_types.amf3.kIntegerType then @read_integer()
+			when amf_types.amf3.kDoubleType then @read_double()
 			when amf_types.amf3.kStringType then @read_utf8_vr()
 			when amf_types.amf3.kArrayType then @read_array()
 			when amf_types.amf3.kObjectType then @read_object()
@@ -276,6 +279,34 @@ class AMFInput extends ByteArrayInputStream
 	read_integer: ->
 		i = @read_u29()
 		i = (i << 3) >> 3
+
+	read_double: ->
+		# https://gist.github.com/275610
+		a = @array
+		i = @offset
+		@offset += 8
+		b1 = a[i++] & 0xff
+		b2 = a[i++] & 0xff
+		b3 = a[i++] & 0xff
+		b4 = a[i++] & 0xff
+		b5 = a[i++] & 0xff
+		b6 = a[i++] & 0xff
+		b7 = a[i++] & 0xff
+		b8 = a[i++] & 0xff
+		sign = 1 - ((b1 >> 7) << 1) 									# sign = bit 0
+		exp = (((b1 << 4) & 0x7FF) | (b2 >> 4)) - 1023 					# exponent = bits 1..11
+
+		# This crazy toString() stuff works around the fact that js ints are
+		# only 32 bits and signed, giving us 31 bits to work with
+		sig = (((b2 & 0xF) << 16) | (b3 << 8) | b4).toString(2) +
+			((b5 >> 7) ? '1' : '0') +
+			(((b5&0x7F) << 24) | (b6 << 16) | (b7 << 8) | b8).toString(2)	# significand = bits 12..63
+
+		sig = parseInt(sig, 2)
+		if (sig == 0 && exp == -1023)
+			0.0
+		else
+			sign*(1.0 + TWOeN52*sig)*Math.pow(2, exp)
 
 	read_utf8_vr: ->
 		ref = @read_u29()
@@ -587,6 +618,11 @@ encode_amf = (message) ->
 # connection
 ##################################################
 
+S4 = -> (((1+Math.random())*0x10000)|0).toString(16).substring(1)
+guid = -> S4()+S4()+"-"+S4()+"-"+S4()+"-"+S4()+"-"+S4()+S4()+S4()
+
+
+
 class HTTPConnection
 	constructor: (@url) ->
 
@@ -595,7 +631,7 @@ class HTTPConnection
 		xhr.open 'POST', @url, true
 		xhr.responseType = 'arraybuffer'
 		xhr.onload = -> callback new Uint8Array xhr.response
-		xhr.send(body)
+		xhr.send body.buffer
 
 class AMFConnection extends HTTPConnection
 	constructor: (url) ->
@@ -615,6 +651,7 @@ class AMFConnection extends HTTPConnection
 
 	pack_message: (destination, operation, args...) ->
 		@pack_messages '', new RemotingMessage
+			messageId: guid()
 			destination: destination
 			operation: operation
 			body: args
@@ -623,11 +660,14 @@ class AMFConnection extends HTTPConnection
 		message.bodies[0].data
 
 	unpack_message: (message) ->
-		(@unpack_messages message)[0].body
+		message = @unpack_messages message
+		# TODO: check ErrorMessage
+		message[0].body
 
 	on_message: (message, callback) ->
 		bytes = encode_amf message
-		@on_post message,
+		# TODO: client.setRequestHeader('Content-Type', 'application/x-amf');
+		@on_post bytes,
 			(array) ->
 				callback decode_amf array
 
