@@ -129,9 +129,6 @@ class ObjectFactory
 	lookup_or_define: (classname, dynamic, externalizable, properties) ->
 		@lookup(classname) or @define(classname, dynamic, externalizable, properties)
 
-	create_external: (classname) ->
-		@externalizable[classname]
-
 	register: (t) ->
 		classname = t.classname
 		if not classname
@@ -618,7 +615,7 @@ class AMFOutput extends ByteArrayOutputStream
 				@write_value v[property]
 			if ti.dynamic
 				for k, x of v
-					if k not in ti.properties
+					if k not in ti.properties and type(k) != 'function'
 						@write_utf8_vr k
 						@write_value x
 				@write_utf8_vr ''
