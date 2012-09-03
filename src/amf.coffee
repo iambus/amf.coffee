@@ -669,27 +669,36 @@ guid = -> S4()+S4()+"-"+S4()+"-"+S4()+"-"+S4()+"-"+S4()+S4()+S4()
 
 
 if typeof module isnt 'undefined' and module.exports
+	# HTTPConnection for node.js
 	{parse} = require 'url'
 	http = require 'http'
 	class HTTPConnection
 		constructor: (@url) ->
 			{@host, @hostname, @port, @path} = parse url
+			@cookies = {}
 
 		post: (body) ->
 			throw "Not Implemented: node.js"
 
 		on_post: (body, callback) ->
+			headers =
+				'Content-Length': body.length
 			options =
 				method: 'POST'
 				host: @host
 				port: @port
 				path: @path
-				headers:
-					'Content-Length': body.length
+				headers: headers
 			if @content_type
-				options.headers['Content-Type'] = @content_type
+				headers['Content-Type'] = @content_type
+			cookie = @get_cookie()
+			if cookie
+				headers['Cookie'] = cookie
 			request = http.request options,
-				(response) ->
+				(response) =>
+					cookies = response.headers['set-cookie']
+					if cookies
+						@update_cookie k for k in cookies
 					chunks = []
 					response.on 'data',
 						(data) ->
@@ -703,7 +712,19 @@ if typeof module isnt 'undefined' and module.exports
 
 			request.write new Buffer body
 			request.end()
+
+		get_cookie: ->
+			buffer = []
+			for k, v of @cookies
+				buffer.push k + '=' + v
+			buffer.join('; ')
+
+		update_cookie: (header) ->
+			cookie = header.split(';')[0]
+			[k, v] = cookie.split('=')
+			@cookies[k] = v
 else
+	# HTTPConnection for browers
 	class HTTPConnection
 		constructor: (@url) ->
 
