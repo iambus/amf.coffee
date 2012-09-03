@@ -82,6 +82,9 @@ class ByteArrayInputStream
 class ActionMessage
 	constructor: (@version, @headers=[], @bodies=[]) ->
 
+class MessageHeader
+	constructor: (@name, @data) ->
+
 class MessageBody
 	constructor: (@target_uri, @response_uri, @data) ->
 
@@ -233,6 +236,7 @@ class AMFInput extends ByteArrayInputStream
 		@string_table = []
 		@object_table = []
 		@traits_table = []
+		@read_value = @read_value0
 
 	read_utf8_n: (n) ->
 		# http://user1.matsumoto.ne.jp/~goma/js/utf.js
@@ -271,8 +275,9 @@ class AMFInput extends ByteArrayInputStream
 	read_value0: ->
 		t = @read_byte()
 		switch t
+			when amf_types.amf0.kStringType then @read_utf8()
 			when amf_types.amf0.kAvmPlusObjectType then @read_value = @read_value3; @read_value()
-			else throw 'not implemented amf0 type: ' + t
+			else throw 'not implemented amf0 type: ' + t + ' in read_value0'
 
 	read_utf8: ->
 		n = @read_u16()
@@ -290,7 +295,7 @@ class AMFInput extends ByteArrayInputStream
 			when amf_types.amf3.kStringType then @read_utf8_vr()
 			when amf_types.amf3.kArrayType then @read_array()
 			when amf_types.amf3.kObjectType then @read_object()
-			else throw 'not implemented amf3 type: ' + t
+			else throw 'not implemented amf3 type: ' + t + ' in read_value3'
 
 	read_u29: ->
 		b = @read_byte() & 0xff
@@ -443,6 +448,11 @@ class Decoder
 
 	read_header: ->
 		name = @input.read_utf8()
+		must_understand = @input.read_byte() != 0
+		header_length = @input.read_u32()
+		@input.reset()
+		value = @input.read_value()
+		new MessageHeader(name, value)
 
 	read_body: ->
 		target_uri = @input.read_utf8()
@@ -473,6 +483,7 @@ class AMFOutput extends ByteArrayOutputStream
 		@traits_table = []
 		@traits = {}
 		@strings = {}
+		@write_value = @write_value0
 
 	create_trait: (v) ->
 		ti = trait_of v
@@ -657,16 +668,52 @@ S4 = -> (((1+Math.random())*0x10000)|0).toString(16).substring(1)
 guid = -> S4()+S4()+"-"+S4()+"-"+S4()+"-"+S4()+"-"+S4()+S4()+S4()
 
 
+if typeof module isnt 'undefined' and module.exports
+	{parse} = require 'url'
+	http = require 'http'
+	class HTTPConnection
+		constructor: (@url) ->
+			{@host, @hostname, @port, @path} = parse url
 
-class HTTPConnection
-	constructor: (@url) ->
+		post: (body) ->
+			throw "Not Implemented: node.js"
 
-	on_post: (body, callback) ->
-		xhr = new XMLHttpRequest
-		xhr.open 'POST', @url, true
-		xhr.responseType = 'arraybuffer'
-		xhr.onload = -> callback new Uint8Array xhr.response
-		xhr.send body.buffer
+		on_post: (body, callback) ->
+			options =
+				method: 'POST'
+				host: @host
+				port: @port
+				path: @path
+				headers:
+					'Content-Length': body.length
+			request = http.request options,
+				(response) ->
+					chunks = []
+					response.on 'data',
+						(data) ->
+							chunks.push data
+					response.on 'end',
+						->
+							buffer = Buffer.concat chunks
+							callback new Uint8Array(buffer)
+			request.on 'error', (e) ->
+				throw e
+
+			request.write new Buffer body
+			request.end()
+else
+	class HTTPConnection
+		constructor: (@url) ->
+
+		post: (body) ->
+			throw "Not Implemented: HTTPConnection.post"
+
+		on_post: (body, callback) ->
+			xhr = new XMLHttpRequest
+			xhr.open 'POST', @url, true
+			xhr.responseType = 'arraybuffer'
+			xhr.onload = -> callback new Uint8Array xhr.response
+			xhr.send body.buffer
 
 class AMFConnection extends HTTPConnection
 	constructor: (url) ->
@@ -704,7 +751,7 @@ class AMFConnection extends HTTPConnection
 
 	on_message: (message, callback) ->
 		bytes = encode_amf message
-		# TODO: client.setRequestHeader('Content-Type', 'application/x-amf');
+		# TODO: client.setRequestHeader('Content-Type', 'application/x-amf')
 		@on_post bytes,
 			(array) ->
 				callback decode_amf array
@@ -713,6 +760,14 @@ class AMFConnection extends HTTPConnection
 		@on_message @pack_message(destination, operation, args...),
 			(message) =>
 				callback @unpack_message message
+
+	send_message: (message) ->
+		bytes = encode_amf message
+		# TODO: client.setRequestHeader('Content-Type', 'application/x-amf')
+		decode_amf array @post bytes
+
+	call: (destination, operation, args) ->
+		@unpack_message message @send_message @pack_message(destination, operation, args...)
 
 ##################################################
 # exports
