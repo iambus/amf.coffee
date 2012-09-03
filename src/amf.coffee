@@ -743,11 +743,15 @@ class AMFConnection extends HTTPConnection
 
 	unpack_message: (message) ->
 		message = @unpack_messages message
-		# TODO: check ErrorMessage
 		classname = classname_of message
 		switch classname
 			when 'flex.messaging.messages.AcknowledgeMessage' then message.body
+			when 'flex.messaging.messages.ErrorMessage' then @unpack_error_message(message)
 			else message[0].body
+
+	unpack_error_message: (message) ->
+		# TODO: call user defined on_error
+		throw message.faultString
 
 	on_message: (message, callback) ->
 		bytes = encode_amf message
