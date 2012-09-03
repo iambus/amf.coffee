@@ -686,6 +686,8 @@ if typeof module isnt 'undefined' and module.exports
 				path: @path
 				headers:
 					'Content-Length': body.length
+			if @content_type
+				options.headers['Content-Type'] = @content_type
 			request = http.request options,
 				(response) ->
 					chunks = []
@@ -712,12 +714,15 @@ else
 			xhr = new XMLHttpRequest
 			xhr.open 'POST', @url, true
 			xhr.responseType = 'arraybuffer'
+			if @content_type
+				xhr.setRequestHeader('Content-Type', @content_type)
 			xhr.onload = -> callback new Uint8Array xhr.response
 			xhr.send body.buffer
 
 class AMFConnection extends HTTPConnection
 	constructor: (url) ->
 		super url
+		@content_type = 'application/x-amf'
 		@response_counter = 0
 
 	get_response_uri: ->
@@ -755,7 +760,6 @@ class AMFConnection extends HTTPConnection
 
 	on_message: (message, callback) ->
 		bytes = encode_amf message
-		# TODO: client.setRequestHeader('Content-Type', 'application/x-amf')
 		@on_post bytes,
 			(array) ->
 				callback decode_amf array
@@ -767,7 +771,6 @@ class AMFConnection extends HTTPConnection
 
 	send_message: (message) ->
 		bytes = encode_amf message
-		# TODO: client.setRequestHeader('Content-Type', 'application/x-amf')
 		decode_amf array @post bytes
 
 	call: (destination, operation, args) ->
