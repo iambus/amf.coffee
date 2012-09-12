@@ -685,7 +685,7 @@ if typeof module isnt 'undefined' and module.exports
 				'Content-Length': body.length
 			options =
 				method: 'POST'
-				host: @host
+				host: @hostname
 				port: @port
 				path: @path
 				headers: headers
