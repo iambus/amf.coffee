@@ -230,6 +230,33 @@ class AcknowledgeMessageExt extends AcknowledgeMessage
 	@alias: 'DSK'
 	@externalizable: true
 
+class CommandMessage extends AsyncMessage
+	@classname: 'flex.messaging.messages.CommandMessage'
+	read_external: (input) ->
+		super input
+		flags_list = @read_flags input
+		for flags, i in flags_list
+			reserved_position = 0
+
+			if i == 0
+				OPERATION_FLAG = 1
+				if flags & OPERATION_FLAG != 0
+					@operation = input.read_value()
+				reserved_position = 1
+
+			if (flags >> reserved_position) != 0 and reserved_position < 6
+				for j in [reserved_position...6]
+					if ((flags >> j) & 1) != 0
+						input.read_value()
+
+	write_external: ->
+		throw "Not Implemented: AcknowledgeMessage.write_external"
+
+class CommandMessageExt extends CommandMessage
+	@classname: 'flex.messaging.messages.CommandMessageExt'
+	@alias: 'DSC'
+	@externalizable: true
+
 class ObjectFactory
 	constructor: ->
 		@externalizable = {}
@@ -277,6 +304,7 @@ register_class = (t) -> object_factory.register t
 
 register_class ArrayCollection
 register_class AcknowledgeMessageExt
+register_class CommandMessageExt
 
 type = do ->
 	classToType = {}
