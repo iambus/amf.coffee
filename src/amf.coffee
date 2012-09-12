@@ -276,12 +276,20 @@ class AMFInput extends ByteArrayInputStream
 		t = @read_byte()
 		switch t
 			when amf_types.amf0.kStringType then @read_utf8()
+			when amf_types.amf0.kStrictArrayType then @read_strict_array()
 			when amf_types.amf0.kAvmPlusObjectType then @read_value = @read_value3; @read_value()
 			else throw 'not implemented amf0 type: ' + t + ' in read_value0'
 
 	read_utf8: ->
 		n = @read_u16()
 		@read_utf8_n(n)
+
+	read_strict_array: ->
+		n = @read_u32()
+		a = []
+		@object_table.push(a)
+		a.push @read_value() for [1..n]
+		a
 
 	read_value3: ->
 		t = @read_byte()
