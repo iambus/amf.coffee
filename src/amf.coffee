@@ -987,7 +987,7 @@ exports =
 	encode_amf: encode_amf
 	AMFConnection: AMFConnection
 
-if typeof module isnt 'undefined' and module.exports
+if module?.exports?
 	module.exports = exports
 else
 	this.amf = exports
