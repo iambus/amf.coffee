@@ -57,6 +57,12 @@ class ByteArrayInputStream
 		@check()
 		@array[@offset++]
 
+	read_bytes: (n) ->
+		@check n
+		a = @array.subarray(@offset, @offset + n)
+		@offset += n
+		a
+
 	read_u16: ->
 		n = @array[@offset] << 8 | @array[@offset + 1]
 		@offset += 2
@@ -102,8 +108,127 @@ class ArrayCollection
 	read_external: (input) ->
 		@source = input.read_value()
 	write_external: ->
-		throw "Not Implemented: write_external"
+		throw "Not Implemented: ArrayCollection.write_external"
 
+class UUIDUtils
+	@from_byte_array: (a) ->
+		if a.length != 16
+			throw "Not Implemented: incorrect UUID buffer size"
+		uuid = ''
+		for b, i in a
+			if i == 4 || i == 6 || i == 8 || i == 10
+				uuid += '-'
+			uuid += '0123456789ABCDEF'[ (b & 0xF0) >>> 4 ]
+			uuid += '0123456789ABCDEF'[  b & 0x0F ]
+		uuid
+
+class AbstractMessage
+	@classname: 'flex.messaging.messages.AbstractMessage'
+	read_flags: (input) ->
+		HAS_NEXT_FLAG = 128
+		flags = []
+		loop
+			flag = input.read_byte() & 0xff
+			flags.push flag
+			unless flag & HAS_NEXT_FLAG
+				break
+		flags
+
+	read_external: (input) ->
+		flags_list = @read_flags input
+		BODY_FLAG = 1
+		CLIENT_ID_FLAG = 2
+		DESTINATION_FLAG = 4
+		HEADERS_FLAG = 8
+		MESSAGE_ID_FLAG = 16
+		TIMESTAMP_FLAG = 32
+		TIME_TO_LIVE_FLAG = 64
+		CLIENT_ID_BYTES_FLAG = 1
+		MESSAGE_ID_BYTES_FLAG = 2
+		for flags, i in flags_list
+			reserved_position = 0
+			if i == 0
+				if (flags & BODY_FLAG) != 0
+					@body = input.read_value()
+
+				if (flags & CLIENT_ID_FLAG) != 0
+					@client_id = input.read_value()
+
+				if (flags & DESTINATION_FLAG) != 0
+					@destination = input.read_value()
+
+				if (flags & HEADERS_FLAG) != 0
+					@headers = input.read_value()
+
+				if (flags & MESSAGE_ID_FLAG) != 0
+					@messageId = input.read_value()
+
+				if (flags & TIMESTAMP_FLAG) != 0
+					@timestamp = input.read_value()
+
+				if (flags & TIME_TO_LIVE_FLAG) != 0
+					@time_to_live = input.read_value()
+
+				reserved_position = 7
+			else if i == 1
+				if (flags & CLIENT_ID_BYTES_FLAG) != 0
+					client_id_bytes = input.read_value()
+					@client_id = UUIDUtils.from_byte_array client_id_bytes
+
+				if (flags & MESSAGE_ID_BYTES_FLAG) != 0
+					message_id_bytes = input.read_value()
+					@message_id = UUIDUtils.from_byte_array message_id_bytes
+
+				reserved_position = 2
+			if (flags >> reserved_position) != 0 and reserved_position < 6
+				for j in [reserved_position...6]
+					if ((flags >> j) & 1) != 0
+						input.read_value()
+
+class AsyncMessage extends AbstractMessage
+	@classname: 'flex.messaging.messages.AsyncMessage'
+	read_external: (input) ->
+		super input
+		flags_list = @read_flags input
+		for flags, i in flags_list
+			reserved_position = 0
+			if i == 0
+				CORRELATION_ID_FLAG = 1
+				CORRELATION_ID_BYTES_FLAG = 2
+
+				if (flags & CORRELATION_ID_FLAG) != 0
+					@correlation_id = input.read_value()
+
+				if (flags & CORRELATION_ID_BYTES_FLAG) != 0
+					correlation_id_bytes = input.read_value()
+					@correlation_id = UUIDUtils.from_byte_array correlation_id_bytes
+
+				reserved_position = 2
+
+			if (flags >> reserved_position) != 0 and reserved_position < 6
+				for j in [reserved_position...6]
+					if ((flags >> j) & 1) != 0
+						input.read_value()
+
+class AcknowledgeMessage extends AsyncMessage
+	@classname: 'flex.messaging.messages.AcknowledgeMessage'
+	read_external: (input) ->
+		super input
+		flags_list = @read_flags input
+		for flags, i in flags_list
+			reserved_position = 0
+
+			if (flags >> reserved_position) != 0 and reserved_position < 6
+				for j in [reserved_position...6]
+					if ((flags >> j) & 1) != 0
+						input.read_value()
+	write_external: ->
+		throw "Not Implemented: AcknowledgeMessage.write_external"
+
+class AcknowledgeMessageExt extends AcknowledgeMessage
+	@classname: 'flex.messaging.messages.AcknowledgeMessageExt'
+	@alias: 'DSK'
+	@externalizable: true
 
 class ObjectFactory
 	constructor: ->
@@ -143,12 +268,15 @@ class ObjectFactory
 		@classes[classname] = t
 		if t.externalizable
 			@externalizable[classname] = t
+			if t.alias
+				@classes[t.alias] = @externalizable[t.alias] = t
 
 object_factory = new ObjectFactory
 
 register_class = (t) -> object_factory.register t
 
 register_class ArrayCollection
+register_class AcknowledgeMessageExt
 
 type = do ->
 	classToType = {}
@@ -307,6 +435,7 @@ class AMFInput extends ByteArrayInputStream
 			when amf_types.amf3.kStringType then @read_utf8_vr()
 			when amf_types.amf3.kArrayType then @read_array()
 			when amf_types.amf3.kObjectType then @read_object()
+			when amf_types.amf3.kByteArrayType then @read_byte_array()
 			else throw 'not implemented amf3 type: ' + t + ' in read_value3'
 
 	read_u29: ->
@@ -381,7 +510,7 @@ class AMFInput extends ByteArrayInputStream
 		len = ref >> 1
 		array = null
 		map = null
-		while true
+		loop
 			name = @read_utf8_vr()
 			if name.length == 0
 				break
@@ -417,7 +546,7 @@ class AMFInput extends ByteArrayInputStream
 			for property in ti.properties
 				object[property] = @read_value()
 			if ti.dynamic
-				while true
+				loop
 					name = @read_utf8_vr()
 					if name.length == 0
 						break
@@ -436,6 +565,15 @@ class AMFInput extends ByteArrayInputStream
 		@traits_table.push(ti)
 		ti.properties.push(@read_utf8_vr()) for [0...count]
 		ti
+
+	read_byte_array: ->
+		ref = @read_u29()
+		if (ref & 1) == 0
+			return @read_object_ref ref >> 1
+		len = ref >> 1
+		a = @read_bytes len
+		@object_table.push(a)
+		a
 
 
 class Decoder
@@ -784,6 +922,7 @@ class AMFConnection extends HTTPConnection
 		classname = classname_of message
 		switch classname
 			when 'flex.messaging.messages.AcknowledgeMessage' then message.body
+			when 'flex.messaging.messages.AcknowledgeMessageExt' then message.body
 			when 'flex.messaging.messages.ErrorMessage' then @unpack_error_message(message)
 			else message[0].body
 
