@@ -102,7 +102,7 @@ class ArrayCollection
 	read_external: (input) ->
 		@source = input.read_value()
 	write_external: ->
-		throw "Not Implemented"
+		throw "Not Implemented: write_external"
 
 
 class ObjectFactory
@@ -110,21 +110,25 @@ class ObjectFactory
 		@externalizable = {}
 		@classes = {}
 
-	class_creator: (classname, properties) ->
-		if not classname and not properties
+	class_creator: (classname, dynamic, externalizable, properties) ->
+		if not classname and not properties?.length
+			if not dynamic
+				throw "Not Implemented: non-dynamic, non-properties, non-classname!"
 			Object
 		else
-			class Object
+			class ASObject
 				@classname = classname
 				@fields = properties
-			Object
+				@dynamic = dynamic
+				@externalizable = externalizable
+			ASObject
 
 	define: (classname, dynamic, externalizable, properties) ->
 		if externalizable
 			throw "Can't define unkown externalizable: " + classname
-		if dynamic
-			throw "Not Implemented"
-		return @class_creator classname, properties
+		if dynamic and classname
+			throw "Not Implemented: define dynamic"
+		return @class_creator classname, dynamic, externalizable, properties
 
 	lookup: (classname) ->
 		@classes[classname]
