@@ -264,8 +264,8 @@ class ObjectFactory
 
 	class_creator: (classname, dynamic, externalizable, properties) ->
 		if not classname and not properties?.length
-			if not dynamic
-				throw "Not Implemented: non-dynamic, non-properties, non-classname!"
+#			if not dynamic
+#				throw "Not Implemented: non-dynamic, non-properties, non-classname!"
 			Object
 		else
 			class ASObject
