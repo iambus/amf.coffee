@@ -955,8 +955,10 @@ class AMFConnection extends HTTPConnection
 			else message[0].body
 
 	unpack_error_message: (message) ->
-		# TODO: call user defined on_error
-		throw message.faultString
+		s = message.faultString
+		if message.faultDetail
+			s += ': ' + message.faultDetail
+		new Error s
 
 	on_message: (message, callback) ->
 		bytes = encode_amf message
@@ -964,10 +966,17 @@ class AMFConnection extends HTTPConnection
 			(array) ->
 				callback decode_amf array
 
-	on: (destination, operation, args, callback) ->
+	on: (destination, operation, args, callback, errorback) ->
 		@on_message @pack_message(destination, operation, args...),
 			(message) =>
-				callback @unpack_message message
+				result = @unpack_message message
+				if result instanceof Error
+					if errorback
+						errorback result
+					else
+						throw result
+				else
+					callback result
 
 	send_message: (message) ->
 		bytes = encode_amf message
