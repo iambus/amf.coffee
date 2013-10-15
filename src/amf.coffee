@@ -351,7 +351,10 @@ class TraitInfo
 	create: (type_factory) ->
 		if not @factory
 			@factory = (type_factory ? global_type_factory).lookup_or_define(@classname, @dynamic, @externalizable, @properties)
-		new @factory
+		if @factory instanceof Function
+			return new @factory
+		else
+			return @factory.create()
 
 ##################################################
 # decode
