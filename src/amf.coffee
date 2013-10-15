@@ -576,6 +576,7 @@ class AMFInput extends ByteArrayInputStream
 
 		if ti.externalizable
 			object.read_external(this)
+			object = object.get_value?() ? object # a trick you can convert ArrayCollection to a normal array
 		else
 			for property in ti.properties
 				object[property] = @read_value()
