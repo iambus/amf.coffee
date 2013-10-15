@@ -916,7 +916,7 @@ else
 			if @content_type
 				xhr.setRequestHeader('Content-Type', @content_type)
 			xhr.onload = -> callback new Uint8Array xhr.response
-			xhr.send body.buffer
+			xhr.send body
 
 class AMFConnection extends HTTPConnection
 	constructor: (url) ->
