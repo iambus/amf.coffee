@@ -257,7 +257,7 @@ class CommandMessageExt extends CommandMessage
 	@alias: 'DSC'
 	@externalizable: true
 
-class ObjectFactory
+class TypeFactory
 	constructor: ->
 		@externalizable = {}
 		@classes = {}
@@ -298,13 +298,19 @@ class ObjectFactory
 			if t.alias
 				@classes[t.alias] = @externalizable[t.alias] = t
 
-object_factory = new ObjectFactory
+create_default_type_factory = ->
 
-register_class = (t) -> object_factory.register t
+	type_factory = new TypeFactory
 
-register_class ArrayCollection
-register_class AcknowledgeMessageExt
-register_class CommandMessageExt
+	register_class = (t) -> type_factory.register t
+
+	register_class ArrayCollection
+	register_class AcknowledgeMessageExt
+	register_class CommandMessageExt
+
+	return type_factory
+
+global_type_factory = create_default_type_factory()
 
 type = do ->
 	classToType = {}
@@ -342,9 +348,9 @@ trait_of = (v) ->
 class TraitInfo
 	constructor: (@classname, @dynamic, @externalizable, @properties=[]) ->
 
-	create: ->
+	create: (type_factory) ->
 		if not @factory
-			@factory = object_factory.lookup_or_define(@classname, @dynamic, @externalizable, @properties)
+			@factory = (type_factory ? global_type_factory).lookup_or_define(@classname, @dynamic, @externalizable, @properties)
 		new @factory
 
 ##################################################
@@ -388,7 +394,7 @@ amf_types =
 TWOeN52 = Math.pow(2, -52)
 
 class AMFInput extends ByteArrayInputStream
-	constructor: (array) ->
+	constructor: (array, @type_factory) ->
 		super array
 		@reset()
 
@@ -565,7 +571,7 @@ class AMFInput extends ByteArrayInputStream
 			return @read_object_ref ref >> 1
 		ti = @read_traits(ref)
 
-		object = ti.create()
+		object = ti.create @type_factory
 		@object_table.push(object)
 
 		if ti.externalizable
@@ -605,8 +611,8 @@ class AMFInput extends ByteArrayInputStream
 
 
 class Decoder
-	constructor: (array) ->
-		@input = new AMFInput(array)
+	constructor: (array, type_factory) ->
+		@input = new AMFInput(array, type_factory)
 
 	check_version: (version) ->
 		switch version
@@ -641,8 +647,8 @@ class Decoder
 		new MessageBody(target_uri, response_uri, value)
 
 
-decode_amf = (array) ->
-	decoder = new Decoder(array)
+decode_amf = (array, type_factory) ->
+	decoder = new Decoder(array, type_factory)
 	decoder.decode()
 
 
@@ -651,7 +657,7 @@ decode_amf = (array) ->
 ##################################################
 
 class AMFOutput extends ByteArrayOutputStream
-	constructor: (size) ->
+	constructor: (size, @type_factory) ->
 		super size
 		@reset()
 
@@ -810,8 +816,8 @@ class AMFOutput extends ByteArrayOutputStream
 				@write_utf8_vr ''
 
 class Encoder
-	constructor: (@message) ->
-		@output = new AMFOutput()
+	constructor: (@message, type_factory) ->
+		@output = new AMFOutput(undefined, type_factory)
 
 	write_header: (header) ->
 		throw "Not Implemented: write_header"
@@ -834,8 +840,8 @@ class Encoder
 		@write_body body for body in bodies
 		@output.to_array()
 
-encode_amf = (message) ->
-	encoder = new Encoder(message)
+encode_amf = (message, type_factory) ->
+	encoder = new Encoder(message, type_factory)
 	encoder.encode()
 
 ##################################################
@@ -919,7 +925,7 @@ else
 			xhr.send body
 
 class AMFConnection extends HTTPConnection
-	constructor: (url) ->
+	constructor: (url, @type_factory) ->
 		super url
 		@content_type = 'application/x-amf'
 		@response_counter = 0
@@ -961,10 +967,10 @@ class AMFConnection extends HTTPConnection
 		new Error s
 
 	on_message: (message, callback) ->
-		bytes = encode_amf message
+		bytes = encode_amf message, @type_factory
 		@on_post bytes,
-			(array) ->
-				callback decode_amf array
+			(array) =>
+				callback decode_amf array, @type_factory
 
 	on: (destination, operation, args, callback, errorback) ->
 		@on_message @pack_message(destination, operation, args...),
@@ -979,8 +985,8 @@ class AMFConnection extends HTTPConnection
 					callback result
 
 	send_message: (message) ->
-		bytes = encode_amf message
-		decode_amf array @post bytes
+		bytes = encode_amf message, @type_factory
+		decode_amf @post(bytes), @type_factory
 
 	call: (destination, operation, args) ->
 		@unpack_message message @send_message @pack_message(destination, operation, args...)
@@ -995,6 +1001,8 @@ exports =
 	decode_amf: decode_amf
 	encode_amf: encode_amf
 	AMFConnection: AMFConnection
+	TypeFactory: TypeFactory
+	create_default_type_factory: create_default_type_factory
 
 if module?.exports?
 	module.exports = exports
