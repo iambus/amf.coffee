@@ -727,6 +727,7 @@ class AMFOutput extends ByteArrayOutputStream
 			when 'string' then @write_string v
 			when 'object' then @write_object v
 			when 'array' then @write_array v
+			when 'boolean' then @write_boolean v
 			else throw "Not Implemented: write_value3 " + type v
 
 	write_u29: (n) ->
@@ -818,6 +819,12 @@ class AMFOutput extends ByteArrayOutputStream
 						@write_utf8_vr k
 						@write_value x
 				@write_utf8_vr ''
+
+	write_boolean: (v) ->
+		if v
+			@write_byte amf_types.amf3.kTrueType
+		else
+			@write_byte amf_types.amf3.kFalseType
 
 class Encoder
 	constructor: (@message, type_factory) ->
